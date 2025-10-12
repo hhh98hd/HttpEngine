@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/inc)
+include_directories(${INCLUDE_DIR})
 include_directories(${INCLUDE_DIR}/Core)
 
 set(SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)

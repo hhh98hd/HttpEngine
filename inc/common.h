@@ -1,0 +1,2 @@
+#define MAX_EVENTS 4096
+#define BUFFER_SIZE 4096

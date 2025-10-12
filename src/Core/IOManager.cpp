@@ -9,26 +9,7 @@
 #include <thread>
 
 #include "IOManager.h"
-
-#define MAX_EVENTS 4096
-
-void handleClientRequest(int epollFd, int clientSocket) {
-    char buf[1024];
-    ssize_t bytesRead = recv(clientSocket, buf, sizeof(buf) - 1, 0);
-    
-    if (bytesRead < 0) {
-        std::cerr << "Error reading from client socket" << std::endl;
-        close(clientSocket);
-        return;
-    }
-
-    buf[bytesRead] = '\0';
-
-    epoll_event event;
-    event.events = EPOLLOUT | EPOLLET;
-    event.data.fd = clientSocket;
-    epoll_ctl(epollFd, EPOLL_CTL_MOD, clientSocket, &event);
-}
+#include "common.h"
 
 IOManager* IOManager::m_instance = nullptr;
 
@@ -101,6 +82,7 @@ void IOManager::run(int port)
     while (true)
     {
         int n = epoll_wait(m_epollFd, events, MAX_EVENTS, -1);
+
         for(int i = 0; i < n; i++){
             int fd = events[i].data.fd;
 
@@ -128,26 +110,36 @@ void IOManager::run(int port)
                 }
 
             } else if(events[i].events & EPOLLIN) {
-                // if(bytesRead < 0) {
-                //     std::cerr << "Error reading from socket: " << strerror(errno) << std::endl;
-                //     close(fd);
-                // } else if(bytesRead == 0) {
-                //     close(fd);
-                // } else {
-                //     // Process the data read from the client                    
-                //     send(fd, response, strlen(response), 0);
-                //     close(fd);
-                // }
-
-                std::thread(handleClientRequest, m_epollFd, fd).detach();
+                char buffer[BUFFER_SIZE];
+                int bytesRead = recv(fd, buffer, sizeof(buffer), 0);
                 
+                if(bytesRead > 0) {
+                    buffer[bytesRead] = '\0'; // Null-terminate the buffer
+                }
+                else if(bytesRead < 0) {
+                    // EAGAIN and EWOULDBLOCK are not errors in non-blocking mode
+                    if(errno != EAGAIN && errno != EWOULDBLOCK) {
+                        close(fd);
+                    }
+                    continue;
+
+                } else if(bytesRead == 0) {
+                    close(fd);
+                    continue;
+                }
+                
+                // Switch to EPOLLOUT to send a response
+                epoll_event outEvent;
+                outEvent.events = EPOLLOUT | EPOLLET;
+                outEvent.data.fd = fd;
+                epoll_ctl(m_epollFd, EPOLL_CTL_MOD, fd, &outEvent);
+
             } else if(events[i].events & EPOLLOUT) {
-                const char* response = "HTTP/1.1 200 OK\r\n"
+                const char* response = "HTTP/1.1 401 OK\r\n"
                            "Content-Type: text/plain\r\n"
                            "\r\n"
                            "Hello, World!";
 
-                std::cout << "EPOLLOUT event on fd: " << fd << std::endl;
                 send(fd, response, strlen(response), 0);
                 close(fd);
             }
