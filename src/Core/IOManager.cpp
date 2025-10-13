@@ -77,7 +77,10 @@ void IOManager::run(int port)
     epoll_event events[MAX_EVENTS];
     init(port);
 
-    std::cout << "Server is running on port " << port << std::endl;
+    std::cout << "Server is running on port " << port << std::endl << std::endl;
+
+    std::string requestHeader;
+    bool headerComplete = false;
 
     while (true)
     {
@@ -110,11 +113,25 @@ void IOManager::run(int port)
                 }
 
             } else if(events[i].events & EPOLLIN) {
+                int totalReceived = 0;
                 char buffer[BUFFER_SIZE];
+            
                 int bytesRead = recv(fd, buffer, sizeof(buffer), 0);
-                
+            
                 if(bytesRead > 0) {
-                    buffer[bytesRead] = '\0'; // Null-terminate the buffer
+                    buffer[bytesRead] = '\0';
+                    requestHeader += std::string(buffer, bytesRead);
+
+                    size_t endOfHeader = requestHeader.find("\r\n\r\n");
+                    if(endOfHeader != std::string::npos && !headerComplete) {
+                        headerComplete = true;
+                        requestHeader = requestHeader.substr(0, endOfHeader + 4);
+                        std::cout << requestHeader;
+                        std::cout << "----------------------------------------" << std::endl << std::endl;
+                    } else {
+
+                    }
+                      
                 }
                 else if(bytesRead < 0) {
                     // EAGAIN and EWOULDBLOCK are not errors in non-blocking mode
@@ -124,21 +141,27 @@ void IOManager::run(int port)
                     continue;
 
                 } else if(bytesRead == 0) {
-                    close(fd);
+                    // close(fd);
                     continue;
                 }
+
                 
-                // Switch to EPOLLOUT to send a response
-                epoll_event outEvent;
-                outEvent.events = EPOLLOUT | EPOLLET;
-                outEvent.data.fd = fd;
-                epoll_ctl(m_epollFd, EPOLL_CTL_MOD, fd, &outEvent);
+                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl << std::endl;
+                std::cout << "Received " << totalReceived << " / 17812 bytes:" << std::endl;
+                
+                if(17812 == totalReceived) {
+                    // Switch to EPOLLOUT to send a response
+                    epoll_event outEvent;
+                    outEvent.events = EPOLLOUT | EPOLLET;
+                    outEvent.data.fd = fd;
+                    epoll_ctl(m_epollFd, EPOLL_CTL_MOD, fd, &outEvent);
+                }
 
             } else if(events[i].events & EPOLLOUT) {
-                const char* response = "HTTP/1.1 401 OK\r\n"
+                const char* response = "HTTP/1.1 200 OK\r\n"
                            "Content-Type: text/plain\r\n"
                            "\r\n"
-                           "Hello, World!";
+                           "Data received successfully.\n";
 
                 send(fd, response, strlen(response), 0);
                 close(fd);
