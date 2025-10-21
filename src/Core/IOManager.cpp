@@ -6,7 +6,6 @@
 
 #include <iostream>
 #include <cstring>
-#include <thread>
 
 #include "IOManager.h"
 #include "common.h"
@@ -79,8 +78,9 @@ void IOManager::run(int port)
 
     std::cout << "Server is running on port " << port << std::endl << std::endl;
 
-    std::string requestHeader;
-    bool headerComplete = false;
+    bool headerCompleted = false;
+    size_t totalBodyBytesReceived = 0;
+    std::string requestHeader = "";
 
     while (true)
     {
@@ -97,7 +97,7 @@ void IOManager::run(int port)
                         if(errno == EAGAIN || errno == EWOULDBLOCK) {
                             break;
                         }
-                        throw std::runtime_error("Error accepting connection");
+                        // throw std::runtime_error("Error accepting connection");
                         continue;
                     }
 
@@ -113,43 +113,58 @@ void IOManager::run(int port)
                 }
 
             } else if(events[i].events & EPOLLIN) {
-                int totalReceived = 0;
                 char buffer[BUFFER_SIZE];
+                
+                while(true) {
+                    ssize_t bytesRead = recv(fd, buffer, sizeof(buffer), 0);
             
-                int bytesRead = recv(fd, buffer, sizeof(buffer), 0);
-            
-                if(bytesRead > 0) {
-                    buffer[bytesRead] = '\0';
-                    requestHeader += std::string(buffer, bytesRead);
+                    if(bytesRead > 0) {
+                        buffer[bytesRead] = '\0';
 
-                    size_t endOfHeader = requestHeader.find("\r\n\r\n");
-                    if(endOfHeader != std::string::npos && !headerComplete) {
-                        headerComplete = true;
-                        requestHeader = requestHeader.substr(0, endOfHeader + 4);
-                        std::cout << requestHeader;
-                        std::cout << "----------------------------------------" << std::endl << std::endl;
-                    } else {
+                        if(!headerCompleted) {
+                            const char* containsHeader = strstr(buffer, END_OF_HEADERS);
+                            
+                            if(containsHeader) {
+                                headerCompleted = true;
+                                ssize_t headerLength = containsHeader - buffer + strlen(END_OF_HEADERS);
+                                requestHeader.append(buffer, headerLength);
 
-                    }
-                      
-                }
-                else if(bytesRead < 0) {
-                    // EAGAIN and EWOULDBLOCK are not errors in non-blocking mode
-                    if(errno != EAGAIN && errno != EWOULDBLOCK) {
+                                std::cout << requestHeader;
+                                std::cout << "---- End of Header ----" << std::endl << std::endl;
+                                
+                                // When header and body data come together
+                                if(bytesRead > headerLength) {
+                                    totalBodyBytesReceived += (bytesRead - headerLength);
+                                }
+                                
+                            } else {
+                                requestHeader.append(buffer, bytesRead);
+                            }
+
+                        } else {
+                            totalBodyBytesReceived += bytesRead;
+                        }
+                        
+                    } else if(bytesRead < 0) {
+                        // EAGAIN and EWOULDBLOCK are not errors in non-blocking mode
+                        if(errno == EAGAIN && errno == EWOULDBLOCK) {
+                            break;
+                        } else {
+                            close(fd);
+                            break;
+                        }
+                        
+
+                    } else if(bytesRead == 0) {
                         close(fd);
+                        break;
                     }
-                    continue;
-
-                } else if(bytesRead == 0) {
-                    // close(fd);
-                    continue;
                 }
-
+                    
+                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl;
+                std::cout << "Received: " << totalBodyBytesReceived << "/17812 bytes:" << std::endl << "########" << std::endl << std::endl;
                 
-                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl << std::endl;
-                std::cout << "Received " << totalReceived << " / 17812 bytes:" << std::endl;
-                
-                if(17812 == totalReceived) {
+                if(104857817 == totalBodyBytesReceived) {
                     // Switch to EPOLLOUT to send a response
                     epoll_event outEvent;
                     outEvent.events = EPOLLOUT | EPOLLET;
@@ -159,12 +174,14 @@ void IOManager::run(int port)
 
             } else if(events[i].events & EPOLLOUT) {
                 const char* response = "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "\r\n"
-                           "Data received successfully.\n";
+                        "Content-Type: text/plain\r\n"
+                        "\r\n"
+                        "Data received successfully.\n";
 
                 send(fd, response, strlen(response), 0);
                 close(fd);
+
+                std::cout << "EPOLLOUT event on fd " << fd << ": " << std::endl;
             }
         }        
     }
