@@ -1,2 +1,4 @@
 #define MAX_EVENTS 4096
-#define BUFFER_SIZE 4096
+#define HEADERS_BUFFER_SIZE 4096
+
+#define HEADERS_TERMINATION "\r\n\r\n"
