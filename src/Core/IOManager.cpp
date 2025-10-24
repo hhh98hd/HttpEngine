@@ -114,6 +114,8 @@ void IOManager::run(int port)
                 }
 
             } else if(events[i].events & EPOLLIN) {
+                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl;
+
                 char buffer[HEADERS_BUFFER_SIZE];
                 
                 while(true) {
@@ -123,27 +125,23 @@ void IOManager::run(int port)
                         buffer[bytesRead] = '\0';
 
                         if(!headerCompleted) {
-                            const char* containsHeaderTermination = strstr(buffer, HEADERS_TERMINATION);
-                            
-                            if(containsHeaderTermination) {
-                                headerCompleted = true;
-                                ssize_t headerLength = containsHeaderTermination - buffer + strlen(HEADERS_TERMINATION);
-                                requestHeader.append(buffer, headerLength);
+                            requestHeader.append(buffer, bytesRead);
+                            size_t headerEndPos = requestHeader.find(HEADERS_TERMINATION);
 
-                                std::cout << requestHeader << std::endl;
-                                std::cout << "---- End of Header ----" << std::endl << std::endl;
+                            headerCompleted = (headerEndPos != std::string::npos);
 
+                            if(headerCompleted) {
                                 hasBody = (requestHeader.find("Content-Length:") != std::string::npos);
-                                
-                                // When header and body data come together
-                                if(hasBody && (bytesRead - headerLength) > 0) {
-                                    totalBodyBytesReceived += (bytesRead - headerLength);
-                                }
-                                
-                            } else {
-                                requestHeader.append(buffer, bytesRead);
-                            }
 
+                                // When header and body data come together
+                                if(hasBody) {
+                                    size_t bodyBytesInBuffer = requestHeader.size() - (headerEndPos + strlen(HEADERS_TERMINATION));
+                                    requestHeader = requestHeader.substr(0, headerEndPos + strlen(HEADERS_TERMINATION));
+                                    totalBodyBytesReceived += bodyBytesInBuffer;
+                                }
+
+                                std::cout << requestHeader;
+                            }
                         } else {
                             totalBodyBytesReceived += bytesRead;
                         }
@@ -158,15 +156,15 @@ void IOManager::run(int port)
                         }
                         
                     } else if(bytesRead == 0) {
-                        // close(fd);
+                        // Connection closed by the client
+                        close(fd);
                         break;
                     }
                 }
                 
                 if(hasBody) {
-                    std::cout << "Received: " << totalBodyBytesReceived << "/104857817 bytes:" << std::endl << "########" << std::endl << std::endl;
+                    std::cout << "Received: " << totalBodyBytesReceived << "/104857817 bytes:" << std::endl << std::endl << std::endl;
                 }
-                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl;
                 
                 if( (104857817 == totalBodyBytesReceived && hasBody) || (!hasBody && headerCompleted) ) {
                     // Switch to EPOLLOUT to send a response
