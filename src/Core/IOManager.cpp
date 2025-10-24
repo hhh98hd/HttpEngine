@@ -1,8 +1,8 @@
 #include <sys/socket.h>
+#include <sys/epoll.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/epoll.h>
 
 #include <iostream>
 #include <cstring>
@@ -81,6 +81,7 @@ void IOManager::run(int port)
     bool headerCompleted = false;
     size_t totalBodyBytesReceived = 0;
     std::string requestHeader = "";
+    bool hasBody = false;
 
     while (true)
     {
@@ -113,7 +114,7 @@ void IOManager::run(int port)
                 }
 
             } else if(events[i].events & EPOLLIN) {
-                char buffer[BUFFER_SIZE];
+                char buffer[HEADERS_BUFFER_SIZE];
                 
                 while(true) {
                     ssize_t bytesRead = recv(fd, buffer, sizeof(buffer), 0);
@@ -122,18 +123,20 @@ void IOManager::run(int port)
                         buffer[bytesRead] = '\0';
 
                         if(!headerCompleted) {
-                            const char* containsHeader = strstr(buffer, END_OF_HEADERS);
+                            const char* containsHeaderTermination = strstr(buffer, HEADERS_TERMINATION);
                             
-                            if(containsHeader) {
+                            if(containsHeaderTermination) {
                                 headerCompleted = true;
-                                ssize_t headerLength = containsHeader - buffer + strlen(END_OF_HEADERS);
+                                ssize_t headerLength = containsHeaderTermination - buffer + strlen(HEADERS_TERMINATION);
                                 requestHeader.append(buffer, headerLength);
 
-                                std::cout << requestHeader;
+                                std::cout << requestHeader << std::endl;
                                 std::cout << "---- End of Header ----" << std::endl << std::endl;
+
+                                hasBody = (requestHeader.find("Content-Length:") != std::string::npos);
                                 
                                 // When header and body data come together
-                                if(bytesRead > headerLength) {
+                                if(hasBody && (bytesRead - headerLength) > 0) {
                                     totalBodyBytesReceived += (bytesRead - headerLength);
                                 }
                                 
@@ -154,17 +157,18 @@ void IOManager::run(int port)
                             break;
                         }
                         
-
                     } else if(bytesRead == 0) {
-                        close(fd);
+                        // close(fd);
                         break;
                     }
                 }
-                    
-                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl;
-                std::cout << "Received: " << totalBodyBytesReceived << "/17812 bytes:" << std::endl << "########" << std::endl << std::endl;
                 
-                if(104857817 == totalBodyBytesReceived) {
+                if(hasBody) {
+                    std::cout << "Received: " << totalBodyBytesReceived << "/104857817 bytes:" << std::endl << "########" << std::endl << std::endl;
+                }
+                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl;
+                
+                if( (104857817 == totalBodyBytesReceived && hasBody) || (!hasBody && headerCompleted) ) {
                     // Switch to EPOLLOUT to send a response
                     epoll_event outEvent;
                     outEvent.events = EPOLLOUT | EPOLLET;
