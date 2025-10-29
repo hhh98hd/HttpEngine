@@ -16,15 +16,17 @@ private:
         bool headerCompleted;
         bool hasBody;
         bool bodyCompleted;
+        size_t bodyLength;
         size_t totalBodyBytesReceived;
 
         ConnectionState()
-            : headerCompleted(false), hasBody(false), bodyCompleted(false), totalBodyBytesReceived(0) {}
+            : headerCompleted(false), hasBody(false), bodyCompleted(false), bodyLength(0), totalBodyBytesReceived(0) {}
     };
 
     IOManager();
     ~IOManager();
     void init(int port);
+    size_t parseContentLength(const std::string& headers);
 
     static IOManager* m_instance;
 

@@ -2,3 +2,4 @@
 #define HEADERS_BUFFER_SIZE 4096
 
 #define HEADERS_TERMINATION "\r\n\r\n"
+#define HEADERS_DELIMITER "\r\n"

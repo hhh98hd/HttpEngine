@@ -71,17 +71,21 @@ void IOManager::init(int port)
     epoll_ctl(m_epollFd, EPOLL_CTL_ADD, m_serverFd, &event);
 }
 
+size_t IOManager::parseContentLength(const std::string &headers)
+{
+    size_t contentLengthPos = headers.find("Content-Length: ");
+    size_t contentLengthEnd = headers.find(HEADERS_DELIMITER, contentLengthPos);
+    std::string bodyLengthStr = headers.substr(contentLengthPos + strlen("Content-Length: "), contentLengthEnd - contentLengthPos - strlen("Content-Length: "));
+
+    return std::stoul(bodyLengthStr);
+}
+
 void IOManager::run(int port)
 {
     epoll_event events[MAX_EVENTS];
     init(port);
 
     std::cout << "Server is running on port " << port << std::endl << std::endl;
-
-    bool headerCompleted = false;
-    size_t totalBodyBytesReceived = 0;
-    std::string requestHeader = "";
-    bool hasBody = false;
 
     while (true)
     {
@@ -111,11 +115,15 @@ void IOManager::run(int port)
                     clientEvent.events = EPOLLIN | EPOLLET;
                     clientEvent.data.fd = clientFd;
                     epoll_ctl(m_epollFd, EPOLL_CTL_ADD, clientFd, &clientEvent);
+
+                    // Add connection state to monitor
+                    m_connections[clientFd] = ConnectionState();
+
+                    std::cout << "Accepted new connection, fd: " << clientFd << std::endl << std::endl;
                 }
-
+            // Handle data from connected clients
             } else if(events[i].events & EPOLLIN) {
-                std::cout << "EPOLLIN event on fd " << fd << ": " << std::endl;
-
+                ConnectionState& connectionState = m_connections[fd];
                 char buffer[HEADERS_BUFFER_SIZE];
                 
                 while(true) {
@@ -124,26 +132,29 @@ void IOManager::run(int port)
                     if(bytesRead > 0) {
                         buffer[bytesRead] = '\0';
 
-                        if(!headerCompleted) {
-                            requestHeader.append(buffer, bytesRead);
-                            size_t headerEndPos = requestHeader.find(HEADERS_TERMINATION);
+                        if(!connectionState.headerCompleted) {
+                            connectionState.requestHeader.append(buffer, bytesRead);
 
-                            headerCompleted = (headerEndPos != std::string::npos);
+                            size_t headerEndPos = connectionState.requestHeader.find(HEADERS_TERMINATION);
+                            size_t bodyBytesInBuffer = connectionState.requestHeader.size() - (headerEndPos + strlen(HEADERS_TERMINATION));
 
-                            if(headerCompleted) {
-                                hasBody = (requestHeader.find("Content-Length:") != std::string::npos);
+                            connectionState.headerCompleted = (headerEndPos != std::string::npos);
+
+                            if(connectionState.headerCompleted) {
+                                connectionState.hasBody = (connectionState.requestHeader.find("Content-Length: ") != std::string::npos);
 
                                 // When header and body data come together
-                                if(hasBody) {
-                                    size_t bodyBytesInBuffer = requestHeader.size() - (headerEndPos + strlen(HEADERS_TERMINATION));
-                                    requestHeader = requestHeader.substr(0, headerEndPos + strlen(HEADERS_TERMINATION));
-                                    totalBodyBytesReceived += bodyBytesInBuffer;
+                                if(connectionState.hasBody) {                                       
+                                    connectionState.requestHeader = connectionState.requestHeader.substr(0, headerEndPos + strlen(HEADERS_TERMINATION));
+                                    connectionState.bodyLength = parseContentLength(connectionState.requestHeader);
+
+                                    connectionState.totalBodyBytesReceived += bodyBytesInBuffer;
                                 }
 
-                                std::cout << requestHeader;
+                                std::cout << connectionState.requestHeader;
                             }
                         } else {
-                            totalBodyBytesReceived += bytesRead;
+                            connectionState.totalBodyBytesReceived += bytesRead;
                         }
                         
                     } else if(bytesRead < 0) {
@@ -151,22 +162,20 @@ void IOManager::run(int port)
                         if(errno == EAGAIN && errno == EWOULDBLOCK) {
                             break;
                         } else {
+                            m_connections.erase(fd);
                             close(fd);
                             break;
                         }
                         
                     } else if(bytesRead == 0) {
                         // Connection closed by the client
+                        m_connections.erase(fd);
                         close(fd);
                         break;
                     }
                 }
                 
-                if(hasBody) {
-                    std::cout << "Received: " << totalBodyBytesReceived << "/104857817 bytes:" << std::endl << std::endl << std::endl;
-                }
-                
-                if( (104857817 == totalBodyBytesReceived && hasBody) || (!hasBody && headerCompleted) ) {
+                if( (connectionState.bodyLength == connectionState.totalBodyBytesReceived && connectionState.hasBody) || (!connectionState.hasBody && connectionState.headerCompleted) ) {
                     // Switch to EPOLLOUT to send a response
                     epoll_event outEvent;
                     outEvent.events = EPOLLOUT | EPOLLET;
@@ -182,6 +191,7 @@ void IOManager::run(int port)
 
                 send(fd, response, strlen(response), 0);
                 close(fd);
+                m_connections.erase(fd);
 
                 std::cout << "EPOLLOUT event on fd " << fd << ": " << std::endl;
             }
