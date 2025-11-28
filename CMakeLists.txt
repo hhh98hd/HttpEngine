@@ -12,6 +12,7 @@ set(SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)
 
 set(SOURCE_CORE 
     ${SOURCE_DIR}/Core/IOManager.cpp
+    ${SOURCE_DIR}/Core/WorkerManager.cpp
 )
 
 set(SOURCE_FILES
